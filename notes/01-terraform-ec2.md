@@ -1,16 +1,25 @@
-# Terraform practice notes — 01: Creating an EC2 instance
+# Terraform + EC2: quick revision notes
 
-## Scope
+Reference: [DAWS 92S](https://github.com/daws-92s/learn-terraform). Its EC2 files could not be fetched for comparison. These are my practice notes, not an exact copy. Items marked **Extra** came from our discussion.
 
-Our starting goal is to create an EC2 instance using Terraform and understand configuration, planning, outputs, and errors. We are covering basic cloud resources, providers, EC2, AMIs, and introductory security groups. Detailed networking comes later.
+## 1. Basic words
 
-## 1. Basic cloud concepts
+| Word | What I remember |
+| --- | --- |
+| AWS | A cloud platform |
+| Resource | Something I manage, like a server or security group |
+| EC2 instance | A virtual server |
+| AMI | The starting image: operating system and possibly software |
+| Instance type | Server size: CPU and memory, such as `t3.micro` |
+| Region | The AWS location where I create resources |
+| Security group | Rules for allowed incoming and outgoing traffic |
+| Terraform | Describes the infrastructure I want in code and manages changes |
+| Provider | Plugin Terraform uses to talk to AWS or another platform |
+| State | Terraform's record linking my resource names to real resources |
 
-A cloud resource is something we create or manage through a cloud platform, such as a virtual server, storage bucket, or security group. AWS is a cloud platform. EC2 is its virtual server service; an EC2 instance is one virtual server. Terraform lets us describe resources in configuration files and manage their lifecycle.
+Networking details come later. Creating a server does not automatically give me access to it.
 
-## 2. Providers: requirements versus configuration
-
-Terraform uses provider plugins to communicate with platforms such as AWS.
+## 2. Provider settings
 
 ```hcl
 terraform {
@@ -27,87 +36,89 @@ provider "aws" {
 }
 ```
 
-The version above is from our practice configuration, not a claim about the latest release.
+- `required_providers`: which plugin I need; like a Maven dependency.
+- `source`: the provider's address and publisher.
+- `version`: exact AWS provider version, not Terraform's version. This is my practice value.
+- `provider`: connection settings, such as region.
+- Credentials can come from an AWS profile, environment, or role.
 
-- `required_providers` declares the plugins this configuration needs.
-- `aws` is the local provider name.
-- `source` identifies the provider and publisher.
-- `version` requires exactly this AWS provider version, not the Terraform CLI version.
-- The `provider` block configures the plugin, including its region.
-- Credentials can come from an AWS profile, environment, or assigned role. They do not need to be written in the configuration.
+**Folder rule:** all `.tf` files in one folder work together. Declare settings once per project, not in every file. Terraform does not automatically read sibling or parent folders. Child modules can inherit provider settings; learn that later.
 
-Java connection: provider requirements resemble Maven dependencies; provider configuration resembles settings used by the dependency.
-
-## 3. Why each practice folder has provider settings
-
-Each independent exercise folder is a separate Terraform configuration. Terraform combines the `.tf` files in the directory where we run it. It does not automatically load files from parent or sibling directories.
-
-```text
-01-ec2/
-  provider.tf
-  ec2.tf
-  outputs.tf
-```
-
-These files form one configuration. We declare the provider once per configuration, not in every file. Filenames organize the code; they do not isolate it. Child modules declare their own provider requirements and normally inherit provider configuration from the root project.
-
-## 4. Declaring EC2 and our first error
-
-We initially wrote:
-
-```hcl
-resource "aws_instance" "example" {
-}
-```
-
-Terraform reported missing arguments because the block did not provide launch settings. Our basic exercise needs an AMI (the operating system image) and an instance type (CPU and memory configuration).
+## 3. Minimum EC2 example
 
 ```hcl
 resource "aws_instance" "example" {
   ami           = "ami-0055977a6e828a4f4"
   instance_type = "t3.micro"
+}
+```
 
-  tags = {
-    Name = "practice"
+The AMI is the ID I supplied in practice; its region and compatibility have not been verified here.
+
+- `aws_instance`: resource type.
+- `example`: local Terraform name; reference it as `aws_instance.example`.
+- `ami` + `instance_type`: required for this basic example, unless a launch template supplies them.
+- Optional `tags = { Name = "practice" }`: AWS Name tag, separate from Terraform's local name.
+
+**Also needed:** AWS permissions, a region, and a usable subnet. If I omit the subnet, AWS can use a default subnet in the default VPC. Without those defaults, I must supply network settings.
+
+**Usually optional in my code:** Name tag, key pair, startup script (`user_data`), custom disk settings, and custom security group. AWS/AMI defaults supply some settings. Company rules may require more.
+
+Without `count` or `for_each`, this block manages one instance. Direct AWS `RunInstances` calls also need `MinCount` and `MaxCount`; Terraform handles those API values.
+
+## 4. Commands
+
+| Command | Reminder |
+| --- | --- |
+| `terraform init` | Set up the folder and install providers |
+| `terraform fmt` | Format the code |
+| `terraform validate` | Check code structure; does not check AMI existence |
+| `terraform plan` | Preview changes; creates nothing |
+| `terraform apply` | Make the changes in AWS |
+| `terraform output` | Show saved outputs after apply |
+| `terraform destroy` | Delete resources managed by this configuration |
+
+`1 to add, 0 to change, 0 to destroy` means one planned creation. **A successful plan does not guarantee a successful apply.** AWS can still reject an AMI or another setting. Apply can create billable resources.
+
+## 5. Errors I experienced
+
+| What happened | Meaning / fix |
+| --- | --- |
+| Empty `aws_instance` block: `Missing required argument` | Give AMI and instance type, or a template that supplies them |
+| `one of ami,launch_template must be specified` | Supply the image directly or through a template |
+| `one of instance_type,launch_template must be specified` | Supply the size directly or through a template |
+| `one of ami,instance_type,launch_template must be specified` | The block has no launch settings; this does not mean just one field is enough |
+| Dummy AMI passed plan | Planning did not verify that image exists; apply can fail |
+| AMI lookup: `Your query returned no results` | Check placeholder/dummy ID, region, access, availability, and filters |
+
+## 6. Extra: what is a launch template?
+
+A saved set of EC2 settings, such as image and size. It can be reused. **Saving a template does not create a running server.** Missing required settings still need to be supplied at launch.
+
+```hcl
+resource "aws_launch_template" "practice" {
+  name_prefix   = "practice-"
+  image_id      = "ami-0055977a6e828a4f4"
+  instance_type = "t3.micro"
+}
+
+resource "aws_instance" "example" {
+  launch_template {
+    id      = aws_launch_template.practice.id
+    version = tostring(aws_launch_template.practice.latest_version)
   }
 }
 ```
 
-The AMI ID was supplied during practice; its region, availability, and compatibility have not been independently confirmed.
+Alternative to section 3, not another block to paste beside it. This manages a template plus an instance. Notice `image_id` in the template versus `ami` in the instance.
 
-- `aws_instance` is the resource type.
-- `example` is Terraform's local resource label.
-- `Name = "practice"` is an AWS tag, separate from that label.
+## 7. Extra: AMI lookup and outputs
 
-The error mentioned `launch_template` because a launch template can supply launch settings instead. We do not need one for this exercise.
+Added because I asked how to check an AMI before creating EC2. This is extra practice, not a required DAWS EC2 lesson step.
 
-## 5. Main commands
-
-| Command | Purpose |
-| --- | --- |
-| `terraform init` | Initialize the directory and install required providers |
-| `terraform validate` | Check configuration syntax and internal consistency |
-| `terraform plan` | Preview proposed infrastructure changes |
-| `terraform apply` | Carry out changes |
-| `terraform destroy` | Remove resources managed by the configuration |
-
-Validation does not check whether an AMI exists in AWS. A plan does not create infrastructure. Applying can create billable resources.
-
-## 6. Our discovery: a dummy AMI can pass planning
-
-We entered a dummy AMI and still saw:
-
-```text
-Plan: 1 to add, 0 to change, 0 to destroy.
-```
-
-This proposes one creation, zero updates, and zero deletions. It does not guarantee that AWS will accept every setting. Planning can contact AWS, but does not check every launch condition. An invalid AMI can therefore fail during apply.
-
-Lesson: a successful plan is a preview, not a guarantee of successful creation.
-
-## 7. Checking an AMI using a data source
-
-A data source reads information; a resource manages something. We added a lookup to check the AMI before using it:
+- `resource`: manages something.
+- `data`: reads existing information.
+- `output`: shows a value I choose.
 
 ```hcl
 data "aws_ami" "selected" {
@@ -115,38 +126,12 @@ data "aws_ami" "selected" {
     name   = "image-id"
     values = ["ami-0055977a6e828a4f4"]
   }
-
   filter {
     name   = "state"
     values = ["available"]
   }
 }
 
-resource "aws_instance" "example" {
-  ami           = data.aws_ami.selected.id
-  instance_type = "t3.micro"
-
-  tags = {
-    Name = "practice"
-  }
-}
-```
-
-`data.aws_ami.selected.id` references the ID returned by the lookup named `selected`. With these fixed filters, the lookup normally runs during planning. It uses the configured region and requires permission to describe images.
-
-## 8. Our lookup error: no results
-
-```text
-Error: Your query returned no results.
-```
-
-The initial copied example contained a placeholder instead of a real AMI ID. Other causes can include a different region, lack of access, an unavailable image, or filters that do not match.
-
-Lesson: the lookup stopped the plan before creating an instance. A successful lookup still does not guarantee compatibility, capacity, or every other launch requirement.
-
-## 9. Displaying the image name and ID
-
-```hcl
 output "selected_image" {
   value = {
     name = data.aws_ami.selected.name
@@ -155,60 +140,15 @@ output "selected_image" {
 }
 ```
 
-The name helps us recognize the image. The ID is what EC2 uses to launch it. Add this output to the existing configuration; do not duplicate the resource block.
+In section 3, replace the fixed `ami` value with `data.aws_ami.selected.id`. With these fixed filters, the lookup normally runs during plan. It needs permission to describe images and checks my provider's region. It does not guarantee every launch condition.
 
-Outputs can appear in the plan when known. After a successful apply, view saved outputs with:
+**Search by name instead:** change the first filter to `name = "name"` and use an image-name pattern in `values`. Restrict `owners` to a trusted publisher. `most_recent = true` chooses the newest match, which may change later. EC2 still receives the resulting ID.
 
-```bash
-terraform output
-```
+## Sources and note-taking rule
 
-For only the name:
+Check DAWS 92S first. Label extra examples. Write: **what I tried -> error -> reason -> fix**. Keep networking for later.
 
-```hcl
-output "image_name" {
-  value = data.aws_ami.selected.name
-}
-```
-
-An output exposes a chosen value; Terraform does not automatically print every AWS attribute.
-
-## 10. Optional: look up by image name
-
-As an alternative to the ID lookup, this example searches Amazon-owned Amazon Linux 2023 images:
-
-```hcl
-data "aws_ami" "selected" {
-  most_recent = true
-  owners      = ["amazon"]
-
-  filter {
-    name   = "name"
-    values = ["al2023-ami-2023.*-x86_64"]
-  }
-
-  filter {
-    name   = "state"
-    values = ["available"]
-  }
-}
-```
-
-Use this instead of the earlier `selected` data block, not alongside it. `most_recent` selects the newest match; `owners` restricts the publisher. The EC2 resource still references `data.aws_ami.selected.id`. The selected image can change as newer images are published.
-
-## 11. Security groups: introduction only
-
-A security group controls allowed inbound and outbound traffic for associated resources such as EC2 instances. Creating an instance and allowing access are separate tasks. If we omit security groups, AWS may use the VPC's default group; this does not automatically allow us to connect. Ports, IP ranges, VPCs, and routing are for a later networking lesson.
-
-## 12. How we maintain these notes
-
-For each exercise, record the goal, configuration, command, result or error, reason, and correction. Prefer daws-92s examples when available and label additional examples clearly. The AMI lookup and output examples here were written for our discussion, not verified as daws-92s examples.
-
-## References
-
-- Training repository: https://github.com/daws-92s/learn-terraform
-- Provider requirements: https://developer.hashicorp.com/terraform/language/providers/requirements
-- Configuration structure: https://developer.hashicorp.com/terraform/language/files
-- Providers in modules: https://developer.hashicorp.com/terraform/language/modules/develop/providers
-- Terraform workflow: https://developer.hashicorp.com/terraform/cli/run
-- AWS AMI data source: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/ami.html
+- [Terraform EC2 arguments](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/instance)
+- [AWS launch templates](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-launch-templates.html)
+- [AMI lookup](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/ami.html)
+- [AWS RunInstances API](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_RunInstances.html)
