@@ -1,5 +1,20 @@
+# Downloaded providers, modules, and local Terraform data
 .terraform/
+terraform-provider-*
+
+# Local state, backups, and state lock files
 *.tfstate
 *.tfstate.*
+.terraform.tfstate.lock.info
+
+# Saved plans and crash logs
 *.plan
 *.tfplan
+crash.log
+crash.*.log
+
+# Local CLI configuration
+.terraformrc
+terraform.rc
+
+# Keep .terraform.lock.hcl tracked for reproducible provider versions.
