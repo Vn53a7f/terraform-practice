@@ -19,7 +19,7 @@ data "aws_ami" "selected" {
     Name = "mongodb practice"
   }
 }*/
-/*resource "aws_security_group" "mongodb" {
+resource "aws_security_group" "mongodb" {
   name        = "mongodb"
   description = "Allow TLS inbound traffic and all outbound traffic"
 
@@ -40,4 +40,4 @@ data "aws_ami" "selected" {
   tags = {
     Name = "sg-roboshop-webbbbbbbbbbbb"
   }
-}*/
+}
